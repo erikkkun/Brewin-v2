@@ -4,7 +4,7 @@ from brewparse import parse_program
 class Interpreter(InterpreterBase):
     def __init__(self, console_output=True, inp=None, trace_output=False):
         super().__init__(console_output, inp)  
-        self.trace_output = False  #for debugging purposes
+        self.trace_output = True  #for debugging purposes
         
     def run(self, program):
         ast = parse_program(program)  #program node (root)
@@ -69,34 +69,122 @@ class Interpreter(InterpreterBase):
             if not var_name in self.variable_name:
                 super().error(ErrorType.NAME_ERROR,f"Variable {var_name} has not been defined",)
             return self.variable_name_to_value[var_name]
-        elif expression_node.elem_type in ["int", "string"]:  #return if it is a value
+        
+        elif expression_node.elem_type in ["int", "string","bool"]:  #return if it is a value
             return expression_node.get("val")
-        elif expression_node.elem_type in ["+","-"]:   #calculate if it is binary op
+        elif expression_node.elem_type == "nil":
+            return None
+        elif expression_node.elem_type in ["+","-", "*","/"]:   #calculate if it is arithmetic binary op
             op1 = expression_node.get("op1")
             op2 = expression_node.get("op2")
             type1 = op1.elem_type
             type2 = op2.elem_type
-            
-            if type1 == "var":
+            # if string + string: ok to concatenate
+            # otherwise non-int not allowed [nil, bool, string]
+            if type1 == "var":    #string now qualifies for +
                 
                 if isinstance(self.eval_expression(op1), str):
                     type1 = "string"
+                if isinstance(self.eval_expression(op1), int):
+                    type1 = "int"
+                if isinstance(self.eval_expression(op1), bool):
+                    type1 = "bool"
+                if self.eval_expression(op1) is None:
+                    type1 = "nil"
+                    
+                
             if type2 == "var":
                 if isinstance(self.eval_expression(op2), str):
                     type2 = "string"
+                if isinstance(self.eval_expression(op2), str):
+                    type2 = "int"
+                if isinstance(self.eval_expression(op2), bool):
+                    type2 = "bool"
+                if self.eval_expression(op2) is None:
+                    type2 = "nil"
             if self.trace_output:
-                print(type1, type2)
-            if type1 == "string" or type2 == "string":
-                super().error(ErrorType.TYPE_ERROR,"Incompatible types for arithmetic operation",)
+                
+                print("calculating",type1, type2, expression_node.elem_type)
+            
+   
+            
+            if expression_node.elem_type ==  "+": #concatenation valid and invalid
+                if isinstance(self.eval_expression(op1), str) and isinstance(self.eval_expression(op2), str):
+                    return self.eval_expression(op1) + self.eval_expression(op2)
+                if isinstance(self.eval_expression(op1), str) and isinstance(self.eval_expression(op2), int):
+                    super().error(ErrorType.TYPE_ERROR,"Incompatible types for arithmetic operation:"+type1+" "+type2,)
+                if isinstance(self.eval_expression(op2), str) and isinstance(self.eval_expression(op1), int):
+                    super().error(ErrorType.TYPE_ERROR,"Incompatible types for arithmetic operation:"+type1+" "+type2,)
+            
+            
+            if type1 in ["string", "bool", "nil"] or type2 in ["string", "bool", "nil"]:
+                super().error(ErrorType.TYPE_ERROR,"Incompatible types for arithmetic operation:"+type1+" "+type2,)
                 return
             if expression_node.elem_type ==  "+":
                 return self.eval_expression(op1) + self.eval_expression(op2)
             if expression_node.elem_type ==  "-":
                 return self.eval_expression(op1) - self.eval_expression(op2)
-        elif expression_node.elem_type == "fcall":  #only case is inputi()
+            if expression_node.elem_type ==  "*":
+                return self.eval_expression(op1) * self.eval_expression(op2)
+            if expression_node.elem_type ==  "/":
+                return self.eval_expression(op1) // self.eval_expression(op2)
+            
+        elif expression_node.elem_type == "fcall":  #function call only case is inputi()
             return self.call_function(expression_node)
+        
+        elif expression_node.elem_type == "neg":  # unary negation
+            op1 = expression_node.get("op1")
+            return -1*self.eval_expression(op1)
+        
+        elif expression_node.elem_type in ['==', '<', '<=', '>', '>=', '!=']:   #compare operations
+            op1 = expression_node.get("op1")     #get the type of left and right
+            op2 = expression_node.get("op2")
+            type1 = op1.elem_type
+            type2 = op2.elem_type
+            if type1 == "var":    
+                if isinstance(self.eval_expression(op1), str):
+                    type1 = "string"
+                if isinstance(self.eval_expression(op1), int):
+                    type1 = "int"
+                if isinstance(self.eval_expression(op1), bool):
+                    type1 = "bool"
+                if self.eval_expression(op1) is None:
+                    type1 = "nil"   
+            if type2 == "var":
+                if isinstance(self.eval_expression(op2), str):
+                    type2 = "string"
+                if isinstance(self.eval_expression(op2), str):
+                    type2 = "int"
+                if isinstance(self.eval_expression(op2), bool):
+                    type2 = "bool"
+                if self.eval_expression(op2) is None:
+                    type2 = "nil"
+            if self.trace_output:
+                print("comparing",type1, type2, expression_node.elem_type)
+            
+            if type1 != type2:     #if two types dont match
+                if expression_node.elem_type == '==':
+                    return False
+                elif expression_node.elem_type == '!=':
+                    return True
+                else:
+                    super().error(ErrorType.TYPE_ERROR,"Incompatible types for comparison operation: "+type1+" "+type2,)
+            
+            #if they do match
+            if expression_node.elem_type == '==':
+                return self.eval_expression(op1) == self.eval_expression(op2)
+            if expression_node.elem_type == '<':
+                return self.eval_expression(op1) < self.eval_expression(op2)
+            if expression_node.elem_type == '>':
+                return self.eval_expression(op1) > self.eval_expression(op2)
+            if expression_node.elem_type == '<=':
+                return self.eval_expression(op1) <= self.eval_expression(op2)
+            if expression_node.elem_type == '>=':
+                return self.eval_expression(op1) >= self.eval_expression(op2)
+            if expression_node.elem_type == '!=':
+                return not self.eval_expression(op1) == self.eval_expression(op2)
+            
 
-    
     def call_function(self, statement_node):
         parameters = statement_node.get("args")   #each is an expression
         func_name = statement_node.get("name")
@@ -122,12 +210,7 @@ class Interpreter(InterpreterBase):
         
 
 
-program = """func main() {
-             var bar;
-  bar = 5;
-  print("The answer is: ", (10 + bar) - 6, "!");
 
-          }"""
 
           
 program = """
@@ -139,8 +222,9 @@ func main() {
   foo = "5";  
   var _bar_bletch;
   a = foo;
-  print(2 + inputi(0,3));
-	bar = 3 + a;
+  print(2 + inputi(3));
+	bar = 3 - 4;
+ print(bar);
 	bletch = 3 - (5 + 2);
 	prompt = "enter a number: ";
 
@@ -149,9 +233,27 @@ func main() {
 
 }
 
-
-
 """
+program = """func main() {
+             var bar;
+  bar = 5;
+  print("The answer is: ", (10 + bar) - 6, "!");
+  print("2" + "3"); 
+  print(4 / -3);
+  print(-2);
+
+          }"""
+program = """func main() {
+    var a;
+    a = true;
+  print(--2);
+  print("11"+"22"); 
+  print( nil == "2");
+print(0 == "0")         ;
+print(nil) ;
+print("true" == "true")  ;
+print(false != true) ;
+          }"""
 
 interpreter = Interpreter()
 interpreter.run(program)   
