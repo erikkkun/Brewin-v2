@@ -10,24 +10,39 @@ class Interpreter(InterpreterBase):
     def run(self, program):
         ast = parse_program(program)  #program node (root)
         
-        self.variable_name_to_value = {}  # dict to hold variables
-        self.variable_name = []    #list of variable names
-        
-        main_func_node = ast.get("functions")[0]
-        if main_func_node.get("name") != "main":
-            super().error(ErrorType.NAME_ERROR,"No main() function was found",)
+        var_name_to_value = {}  # dict to hold variables
+        self.functions = {} # hold defined functions
+        self.scope_stack = [var_name_to_value]   #scope stack to save scopes
+        main_node = 0
+        self.function_output = None #saving rerturn values
+        for function_node in ast.get("functions"):
+            
+            if function_node.get("name") == "main":
+                main_node = function_node
+                continue
+            else:  #define functions
+                name =  function_node.get("name")
+                args =  function_node.get("args")
+                statements = function_node.get("statements")
+                func_key = name + str(len(args))   # foo(a) = "foo1"  foo(a,b) = "foo2"
+                self.functions[func_key] = [args,statements]
+        # print(self.functions)
+        if main_node:
+            self.run_main(main_node)
         else:
-            self.run_func(main_func_node)
-        
+            super().error(ErrorType.NAME_ERROR,"No main() function was found",)
         if self.trace_output:
             print("program finished")
             # print(ast.elem_type)
             # print(main_func_node)
 
 
-           
-	
-    def run_func(self, function_node):
+
+
+            
+            
+    def run_main(self, function_node):  #running the main function
+        
         for statement in function_node.get("statements"):
             self.run_statement(statement)
     
@@ -42,66 +57,111 @@ class Interpreter(InterpreterBase):
             self.call_function(statement_node)
         
         elif statement_node.elem_type == "if":   #if statements
-            self.if_statement(statement_node)
+            return self.if_statement(statement_node)
             
         elif statement_node.elem_type == "for":   #for loop
-            self.for_loop(statement_node)
+            return self.for_loop(statement_node)
+        
+        elif statement_node.elem_type == "return":   #for loop
+            self.return_from(statement_node)
+            if self.trace_output:
+                print("returned")
+            # stack pop to boundtry (none)
+            while self.scope_stack:
+                popped_element = self.scope_stack.pop()
+            
+                if popped_element is None:
+                    # print("Encountered None, stopping.")
+                    break
+            return "returned"
+        return "continue"
+
     
-    def do_defination(self, statement_node):
+    def do_defination(self, statement_node):   #define variable in the local scope
         var_name = statement_node.get("name")
-        if var_name in self.variable_name:
+        
+        stack = self.scope_stack
+        scope = stack[-1]    #current scope
+        if var_name in scope:
             super().error(ErrorType.NAME_ERROR, f"Variable {var_name} defined more than once",)
             return
-        self.variable_name.append(var_name)
-        self.variable_name_to_value[var_name] = ""   #initial value for any var
+        scope[var_name] = ""   #initial value for any var
         if self.trace_output:
-            print("defined variable", var_name)
-            
+            print("defined variable", var_name)        
+    
+    def do_assignment(self, statement_node):    #assign variable in the current scopes
+        target_var_name = statement_node.get("name")
+        expression_node = statement_node.get("expression")
+        resulting_value = self.eval_expression(expression_node)
+        
+        stack = self.scope_stack
+        for scope in reversed(stack):   
+            if scope is None: # Stop at the function boundary marker
+                break
+            if target_var_name in scope:
+                scope[target_var_name] = resulting_value
+                return
+        super().error(ErrorType.NAME_ERROR,f"Variable {target_var_name} has not been defined",)
+
+        if self.trace_output:
+                print(target_var_name, "assigned", resulting_value)
+
+        
     def find_type(self, op):
-        #the input op can be a expression, var
-        # print(op)       
+        #the input op can be a expression, var   
         type = op.elem_type     #when it is a expression or variable
         if type == "var":    
-                if isinstance(self.eval_expression(op), str):
-                    type = "string"
-                if isinstance(self.eval_expression(op), int):
-                    type = "int"
-                if isinstance(self.eval_expression(op), bool):
-                    type = "bool"
-                if self.eval_expression(op) is None:
-                    type = "nil"   
+            if isinstance(self.eval_expression(op), str):
+                type = "string"
+            if isinstance(self.eval_expression(op), int):
+                type = "int"
+            if isinstance(self.eval_expression(op), bool):
+                type = "bool"
+            if self.eval_expression(op) is None:
+                type = "nil"   
+        elif type == "fcall":
+            type = "ok"
+            # self.eval_expression(op)
+            # if isinstance(self.function_output, str):
+            #     type = "string"
+            # if isinstance(self.function_output, int):
+            #     type = "int"
+            # if isinstance(self.function_output, bool):
+            #     type = "bool"
+            # if self.function_output is None:
+            #     type = "nil"   
         else:
             return type
         return type
     
     def match_type(self, t1, t2):   # see if two types match for comparison
-        if {t1,t2} in [{"int", "+"}, {"int", "-"}, {"int", "neg"}, {"int", "*"}, {"int", "/"}, {"+", "-"}, {"+", "neg"}, {"+", "*"}, {"+", "/"}, {"-", "neg"}, {"-", "*"}, {"-", "/"}, {"neg", "*"}, {"neg", "/"}, {"*", "/"}]:
+        allowed = [
+            {"int", "+"}, {"int", "-"}, {"int", "neg"}, {"int", "*"}, {"int", "/"}, 
+            {"+", "-"}, {"+", "neg"}, {"+", "*"}, {"+", "/"}, {"-", "neg"}, 
+            {"-", "*"}, {"-", "/"}, {"neg", "*"}, {"neg", "/"}, {"*", "/"}
+        ]
+        if t1 == "ok" or t2 == "ok" or {t1,t2} in allowed:
             return True
         return t1 == t2
-
-        
-    
-    def do_assignment(self, statement_node):
-        target_var_name = statement_node.get("name")
-        
-        if not target_var_name in self.variable_name:
-            super().error(ErrorType.NAME_ERROR,f"Variable {target_var_name} has not been defined",)
-            if self.trace_output:
-                print("Undefined variable", target_var_name)
-                
-        expression_node = statement_node.get("expression")
-        resulting_value = self.eval_expression(expression_node)
-        self.variable_name_to_value[target_var_name] = resulting_value  #successfully assigned
-        if self.trace_output:
-                print(target_var_name, "assigned", resulting_value)
     
     def eval_expression(self, expression_node):
-        
+        try:
+            expression_node.elem_type
+        except:
+            return expression_node
         if expression_node.elem_type == "var":  #get and its value if it is a variable
             var_name = expression_node.get("name")
-            if not var_name in self.variable_name:
-                super().error(ErrorType.NAME_ERROR,f"Variable {var_name} has not been defined",)
-            return self.variable_name_to_value[var_name]
+            
+            for scope in reversed(self.scope_stack): #get the variable value in the current scopes
+                if scope is None:  # Stop at the function boundary marker
+                    break
+                if var_name in scope:
+                    return scope[var_name]
+            super().error(ErrorType.NAME_ERROR,f"Variable {var_name} has not been defined",)
+
+            # if not var_name in self.variable_name_to_value.keys():
+            #     super().error(ErrorType.NAME_ERROR,f"Variable {var_name} has not been defined",)
+            # return self.variable_name_to_value[var_name]
         
         elif expression_node.elem_type in ["int", "string","bool"]:  #return if it is a value
             return expression_node.get("val")
@@ -140,7 +200,8 @@ class Interpreter(InterpreterBase):
                 return self.eval_expression(op1) // self.eval_expression(op2)
             
         elif expression_node.elem_type == "fcall":  #function call only case is inputi()
-            return self.call_function(expression_node)
+            self.call_function(expression_node)
+            return self.function_output
         
         elif expression_node.elem_type == "neg":  # unary negation
             op1 = expression_node.get("op1")
@@ -171,8 +232,6 @@ class Interpreter(InterpreterBase):
             if expression_node.elem_type ==  "&&":
                 return (lambda: self.eval_expression(op1))() and (lambda: self.eval_expression(op2))() #strict evaluation
 
-            
-        
         elif expression_node.elem_type in ['==', '<', '<=', '>', '>=', '!=']:   #compare operations
             op1 = expression_node.get("op1")     #get the type of left and right
             op2 = expression_node.get("op2")
@@ -205,10 +264,13 @@ class Interpreter(InterpreterBase):
             
 
     def call_function(self, statement_node):
-        parameters = statement_node.get("args")   #each is an expression
+        parameters = statement_node.get("args")   #list of parameters, each is an expressions
         func_name = statement_node.get("name")
+        func_key = func_name + str(len(parameters))
+        # print(func_key)
         if self.trace_output:
             print(f"tried to call {func_name}")
+            
         if func_name == "print":
             output = ""
             for i in parameters:
@@ -221,13 +283,44 @@ class Interpreter(InterpreterBase):
             super().output(output)
             if self.trace_output:
                 print("printed: "+output)
+                
         elif func_name == "inputi":
             if len(parameters) == 1:
                 super().output(parameters[0].get("val"))
             elif len(parameters) > 1:
                 super().error(ErrorType.NAME_ERROR,f"No inputi() function found that takes > 1 parameter",)
             user_input = super().get_input()
+            self.function_output = int(user_input)
             return int(user_input)
+        
+        elif func_key in self.functions:   #a self defined function
+            if self.trace_output:
+                print(func_key,"is called with",parameters)
+            args = self.functions[func_key][0]   #list of arguments
+            statements = self.functions[func_key][1]
+            
+            # start to scope
+            self.scope_stack.append(None)   #set a function boundry marker
+            func_scope = {}
+            self.scope_stack.append(func_scope)  #scope is ready
+            for i in range(len(args)):   #define and set the arguments
+                self.do_defination(args[i])
+                self.do_assignment(  { "name": args[i].get("name"), "expression":parameters[i]} )
+            
+            for statement in statements:
+                result = self.run_statement(statement)
+                
+                if not result == "continue":
+                    if self.trace_output:
+                        print("return from",func_key)
+
+                    return self.function_output
+            #remove the scope
+            self.scope_stack.pop()
+            self.scope_stack.pop()
+            return self.function_output  #default return
+                
+            
         else:  #invalid function call
             super().error(ErrorType.NAME_ERROR,f"Function {func_name} has not been defined",)
     
@@ -239,14 +332,27 @@ class Interpreter(InterpreterBase):
 
         if not isinstance(condition, bool): #only bool condition is allowed
             super().error(ErrorType.TYPE_ERROR,"Incompatible types for if statement condition: "+str(condition))
+            
+        # start to scope
+        if_scope = {}
+        self.scope_stack.append(if_scope)
+        
         if condition:
             for s in true_statements:
-                self.run_statement(s)
+                result = self.run_statement(s)
+                
+                if not result == "continue":
+                    return "returned"
         else:
             if false_statements:   #if there is a else statement
                 for s in false_statements:
-                    self.run_statement(s)
+                    result = self.run_statement(s)
+                
+                    if not result == "continue":
+                        return "returned"
+                    
         # possible scoping
+        self.scope_stack.pop()
     
     def for_loop(self, statement_node):    #for loop
         init = statement_node.get("init")
@@ -260,16 +366,24 @@ class Interpreter(InterpreterBase):
 
         while(flag):
             for s in statements:
-                self.run_statement(s)
+                result = self.run_statement(s)
+                
+                if not result == "continue":
+                    return "returned"
+                
             self.run_statement(update)
             flag = self.eval_expression(statement_node.get("condition"))
         
-        # scoping
         
-  
+    def return_from(self, statement_node):
+        expression = statement_node.get("expression")
+        self.function_output = self.eval_expression(expression)
+        # print("function output is set to",self.function_output)
+        # return self.eval_expression(expression)
 
 
 # test cases
+program = 1
 if True: 
     program = """
     func main() {
@@ -292,28 +406,25 @@ if True:
     }
 
     """
-    program = """func main() {
-        var a;
-        a = true; print(a);
-    print( 1==1 || true || ! (3<5));
-    print(! (3<5));
-    print("11"+"22"); 
-    print( nil == "2");
-    print(0 == "0")         ;
-    print(nil) ;
-    print("true" == "true ")  ;
-    print(false != true) ;
-            }"""
-
-program = """func main() {
-var x;
-for (x = 10; x > (1-1); x = x - 1) {  
-  var q;
-  for (q = 0; q < x; q = q + 1) {
-    print(q*q);
-  }
+    program = """
+func foo() { 
+ print("hello");
+ /* no explicit return command */
 }
-          }"""
+
+func bar() {
+  return 1;  /* no return value specified */
+}
+
+func main() {
+   var val;
+   val = nil;
+   print(bar() + 1);
+   if (foo() == val && true) { print("this should print!"); }
+}
+
+"""
+
 
 
 interpreter = Interpreter()
